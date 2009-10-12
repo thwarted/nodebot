@@ -4,6 +4,7 @@ FIXME:
  - the --quit option could be implemented better, the way it communicates to the currently active daemon
 
 TODO:
+ - close stdio during daemonization
  - add rate limiting and flood control, although the IRC server can be configured to handle most of this
  - accept messages from stdin
  - have a default channel listed in the config file for each identity
