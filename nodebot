@@ -411,3 +411,4 @@ if __name__ == '__main__':
     irccon.send("QUIT\r\n")
     irccon.shutdown(socket.SHUT_RDWR)
 
+# vim: set expandtab:ai:ts=4
