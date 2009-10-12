@@ -1,0 +1,57 @@
+A simple announce-only IRC bot, used to display system status messages on IRC.
+
+Ideally for use only on your private IRC server.  You may piss off the ops if
+you use this on a public server.  It would also be wise to protect your IRC
+server with a password and SSL.
+
+Inspiration:
+ It's well known that various botnets use IRC to communicate between the 
+ infected computers and with the people controling them.  A google search for
+ "botnet irc" shows the research in this area.  How can we use these tools 
+ and ideas for good rather than evil?
+
+The specific architecture it uses is designed to tackle the following
+problems:
+ - you don't know how frequently you'll be sending messages, or which
+   processes will be sending them
+ - you don't like using a single bot that all machines multiplex their
+   messages through
+ - you don't want to maintain a long running, heavyweight process - nodebot
+   starts up on demand
+ - you have systems with various python versions and different libraries -
+   nodebot aims to be extremely portable
+
+Features:
+ - aims to be extremely lightweight compared to other IRC bots.
+ - should work well from shell scripts
+ - no dependencies other than stock python libs; copy to system and use
+ - by default identifies itself with a NICK equal to the hostname; supports
+   additional fixed identies, for corner use cases
+ - for convience, any user can invoke it, and any local process can connect 
+   to it to send more messages (becomes nobody if invoked as root)
+ - when connecting to the IRC server, supports SSL and server passwords
+ - supports multiple channels
+
+Unfeatures:
+ - doesn't join a channel, so your IRC server needs to allow talking on a
+   channel that isn't joined
+ - doesn't accept privmsgs from IRC users, not a method of remote control of
+   a machine, the majority of input from the server is dumped
+ - not an IRC bot in the traditional sense
+
+Maintains a listening socket on localhost, later invocations will use the same
+connection to the IRC server.  Better than a single bot that all servers use
+to connect to because a single node's activity won't influence the other nodes'
+ability to send messages (such as due to rate limiting).
+
+Ideas for use:
+ - create an identity in the configuration file specifically for your revision
+   control system and invoke nodebot in a post-commit or push hook.
+ - hook into monitoring systems like nagios.
+ - monitor log files and live monitor many systems at once.  immediately report
+   sudoers violations.
+ - use with a netlink socket or ULOG iptables rules to announce specific
+   network activity (ssh port accesses, for example).
+ - anything that can detect an event and invoke a script can use this to 
+   announce it on IRC
+

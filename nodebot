@@ -1,0 +1,413 @@
+#!/usr/bin/python
+
+'''
+A simple announce-only IRC bot, used to display system status messages on IRC.
+Maintains a TCP listener on localhost, latter invocations will use the same
+connection to the IRC server.
+'''
+
+def usage():
+    print "A simple announce-only IRC bot, used to display system status messages on IRC."
+    print "Maintains a TCP listener on localhost, latter invocations will use the same"
+    print "connection to the IRC server."
+    print "-h --help        usage"
+    print "-i --identity=x  use identity x from the config file"
+    print "-c --conf=x      read configuration file x"
+    print "-n --nodaemon    don't daemonize"
+    print "-v --verbose     dump network and protocol traffic"
+    print "-s --single      single shot run, exit after sending message"
+    print "-q --quit        tell the currently running daemon to quit"
+    print "<channel> <message>"
+
+'''
+purposely using the socket library directly and no networking frameworks for 
+maximum portablity, just python and python's standard libary
+'''
+
+import os
+import sys
+import socket
+import select
+import time
+import string
+import re
+import random
+import posix
+import pwd
+import ConfigParser
+import getopt
+
+try:
+    import ssl
+except ImportError:
+    class ssl: pass
+
+class EndOfInput: pass
+class TimeOut: pass
+
+def accept_other_input(sock):
+    global pendingoutput
+    global running
+    try:
+        input = sock.recv(1024)
+        if len(input) == 0:
+            raise EndOfInput
+    except (socket.error, EndOfInput):
+        inputs.pop(inputs.index(sock))
+        sock.shutdown(socket.SHUT_RDWR)
+        try:
+            del pendingoutput[sock]
+        except KeyError:
+            pass
+        return
+
+    for line in input.splitlines():
+        if verbose:
+            print "<+ %s" % (repr(line),)
+        if line == "-quit":
+            if verbose:
+                print ">> [received quit]"
+            running = False
+            return
+        mo = re.match(r'^(\w+)\s+(.+)?$', line)
+        channel, msg = mo.groups()
+        o = "PRIVMSG #%s :%s\r\n" % (channel, msg)
+        queue_output(irccon, o)
+
+def queue_output(sock, msg, pos=-1):
+    #print "queuing " + msg + " on " + repr(sock)
+    try:
+        if pos != -1:
+            pendingoutput[sock].insert(pos, msg)
+        else:
+            pendingoutput[sock].append(msg)
+    except (KeyError, IndexError):
+        pendingoutput[sock] = [msg]
+
+def parsemsg(s):
+    """Breaks a message from an IRC server into its prefix, command, and 
+       arguments.  Lifted from twisted, found on stackoverflow.  """
+    prefix = ''
+    trailing = []
+    if not s:
+        return ['', '', '']
+    if s[0] == ':':
+        prefix, s = s[1:].split(' ', 1)
+    if s.find(' :') != -1:
+        s, trailing = s.split(' :', 1)
+        args = s.split()
+        args.append(trailing)
+    else:
+        args = s.split()
+    command = args.pop(0)
+    return prefix, command, args
+
+shortline = ''
+def process_irccon(sock):
+    global registered
+    global running
+    global nick
+    global preferred_nick
+    global shortline
+
+    try:
+        if ircserver_ssl:
+            input = ircserver_ssl.read(1024)
+        else:
+            input = sock.recv(1024)
+        if len(input) == 0:
+            raise EndOfInput
+    except (socket.error, EndOfInput):
+        running = False
+        return
+
+    if shortline:
+        input = shortline + input
+        shortline = ''
+    if input.index("\n"):
+        # only do the string manipulation if we have multiple lines
+        # rather than trying to keep appending old data and the
+        # input getitng longer
+        if input[-1:] != "\n":
+            lastnl = input.rindex("\n")
+            shortline = input[lastnl+1:]
+            input = input[:lastnl]
+    for line in input.splitlines():
+        if verbose:
+            print "<< %s" % (line, )
+        prefix, command, args = parsemsg(line)
+
+        if command == "ERROR":
+            print " ".join(args)
+            sys.exit(1)
+
+        if command == "PING":
+            queue_output(sock, "PONG :" + args[0] + "\r\n", 0)
+
+        if command == "MODE":
+            # this seems to be a good indication that we're registered
+            registered = True
+
+        if command == "401":
+            # channel doesn't exist, nothing to do, really
+            pass
+            
+        if command == "433" or command == "432":
+            n = gen_nick()
+            queue_output(sock, "NICK " + n + "\r\n", 0)
+
+        if command == "NICK" or command == "004":
+            # server has told us our nick
+            nick = args[0]
+
+        if command == "PRIVMSG" and (args[0] == nick or args[0] == preferred_nick):
+            if prefix.index("!"):
+                who = prefix[:prefix.index("!")]
+                if args[1] == "config":
+                    dump_config(who)
+                if args[1] == "quit":
+                    queue_output(irccon, "PRIVMSG %s :quitting\r\n" % (who,))
+                    running = False
+
+
+def dump_config(touser):
+    global options
+    c = 0
+    for k,v in options.items():
+        c = c + 1
+        queue_output(irccon, "PRIVMSG %s :%s : %s\r\n" % (touser, repr(k), repr(v)))
+    queue_output(irccon, "PRIVMSG %s : %d total items\r\n" % (touser, c))
+
+def gen_nick():
+    n = preferred_nick + '-' + hex(random.randint(1, 2 ** 16))[2:].upper().zfill(4)
+    return n
+
+def daemonize():
+    os.fork() and sys.exit(0)
+    os.setsid()
+    os.fork() and sys.exit(0)
+    os.chdir('/')
+    os.umask(0)
+
+
+def drop_privs():
+    if os.getuid() == 0:
+        try:
+            nobody_pw = pwd.getpwnam('nobody')
+            nobody_uid, nobody_gid = nobody_pw.pw_uid, nobody_pw.pw_gid
+        except KeyError:
+            nobody_uid, nobody_gid = 65534, 65534
+        os.setgid(nobody_gid)
+        os.setuid(nobody_uid)
+
+
+if __name__ == '__main__':
+
+    drop_privs()
+
+    try:
+        optstr = "svnqhi:c:"
+        optlist = ['single', 'verbose', 'nodeamon', 'quit', 'help', 
+                   'identity=', 'conf=']
+        opts, argv = getopt.getopt(sys.argv[1:], optstr, optlist)
+    except getopt.GetoptError, err:
+        print str(err)
+        usage()
+        sys.exit(2)
+
+    identity = '*'
+    configfile = None
+    possible_configfiles = ["/usr/local/etc/nodebot.conf", "/etc/nodebot.conf"]
+    sendquit = False
+    dodaemonize = True
+    verbose = False
+    singleShot = False
+    for o, a in opts:
+        if o in ('-h', '--help'):
+            usage()
+            sys.exit(0)
+        elif o in ('-n', '--nodaemon'):
+            dodaemonize = False
+        elif o in ('-c', '--conf'):
+            configfile = a
+        elif o in ('-i', '--identity'):
+            identity = a
+        elif o in ('-q', '--quit'):
+            sendquit = True
+        elif o in ('-v', '--verbose'):
+            verbose = True
+        elif o in ('-s', '--single'):
+            singleShot = True
+        else:
+            assert False, "unhandled option " + a
+
+    if len(argv) < 2 and not sendquit:
+        usage()
+        sys.exit(2)
+
+    if verbose:
+        dodaemonize = False
+
+    if not sendquit:
+        arg_channel = argv[0]
+        arg_msg = argv[1]
+
+    defaults = {
+        'idletime': 30,
+        'listen_host': '127.0.0.1',
+        'listen_port': 58113,
+    }
+    if configfile:
+        possible_configfiles.insert(0, configfile)
+        configfile = None
+    for cf in possible_configfiles:
+        if os.access(cf, os.R_OK):
+            configfile = cf
+    if not configfile:
+        print "Unable to find readable config files from " + string.join(possible_configfiles, ", ")
+        sys.exit(1)
+        
+    c = ConfigParser.RawConfigParser(defaults)
+    c.read(configfile)
+
+    if identity not in c.sections():
+        print "Missing identity [" + identity + "] in config file"
+        sys.exit(1)
+
+    try:
+        ircserver_host = c.get(identity, 'ircserver_host')
+        ircserver_port = c.getint(identity, 'ircserver_port')
+        ircserver_ssl = c.getboolean(identity, 'ircserver_ssl')
+        ircserver_pass = c.get(identity, 'ircserver_pass')
+    except ConfigParser.NoOptionError:
+        print "ircserver_host, ircserver_port and ircserver_ssl must all be specified in "+configfile
+        sys.exit(1)
+
+    idletime = c.getint(identity, 'idletime')
+    listen_host = c.get(identity, 'listen_host')
+    listen_port = c.getint(identity, 'listen_port')
+
+    me = os.uname()[1]
+    if identity == '*':
+        identity = me.split(".")[0]
+
+    pendingoutput = {}
+    registered = False
+
+    preferred_nick = identity
+    nick = preferred_nick
+
+
+    listensock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listensock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if sendquit:
+        try:
+            listensock.connect((listen_host, listen_port))
+            listensock.send("-quit\n")
+            listensock.shutdown(socket.SHUT_RDWR)
+        except socket.error, e:
+            pass
+        sys.exit(0)
+        
+    try:
+        listensock.bind((listen_host, listen_port))
+    except socket.error: 
+        try:
+            listensock.connect((listen_host, listen_port))
+            listensock.send("%s\t%s\n" % (arg_channel, arg_msg))
+            listensock.shutdown(socket.SHUT_RDWR)
+        except socket.error:
+            pass
+        sys.exit(0)
+
+    if dodaemonize:
+        daemonize()
+
+    listensock.listen(5)
+
+    irccon = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    try:
+        irccon.connect((ircserver_host, ircserver_port))
+    except socket.error, e:
+        sys.exit(1)
+
+    if ircserver_ssl:
+        if getattr(ssl, "wrap_socket", None) == None:
+            ircserver_ssl = socket.ssl(irccon)
+        else:
+            ircserver_ssl = False
+            irccon = ssl.wrap_socket(irccon)
+
+    if ircserver_pass:
+        queue_output(irccon, "PASS " + ircserver_pass + "\r\n")
+    queue_output(irccon, "USER %s %s %s :%s\r\n" % (nick, "8", me, me))
+    queue_output(irccon, "NICK " + nick + "\r\n")
+
+    inputs = [irccon,listensock]
+
+    exitat = time.time() + idletime
+    running = True
+    while True:
+        try:
+            outputs = []
+            for g in pendingoutput:
+                if len(pendingoutput[g]):
+                    outputs.append(g)
+
+            inputready, outputready, exceptready = select.select(inputs, outputs, [], 10)
+
+            for s in inputready:
+                if s == irccon:
+                    process_irccon(s)
+                elif s == listensock:
+                    newsock, x = s.accept()
+                    inputs.append(newsock)
+                    if nick != preferred_nick:
+                        queue_output(irccon, "NICK " + preferred_nick + "\r\n", 0)
+                else:
+                    exitat = time.time() + idletime
+                    accept_other_input(s)
+
+            for s in outputready:
+                try:
+                    line = pendingoutput[s].pop(0)
+                    if len(pendingoutput[s]) == 0:
+                        del pendingoutput[s]
+                except KeyError:
+                    continue
+                if verbose:
+                    print ">> %s" % (line.strip(),)
+                if s == irccon and ircserver_ssl:
+                    ircserver_ssl.write(line)
+                else:
+                    s.send(line)
+
+            if arg_channel and arg_msg and registered:
+                queue_output(irccon, "PING :" + str(int(time.time())) + "\r\n")
+                for m in arg_msg.splitlines():
+                    queue_output(irccon, "PRIVMSG #%s :%s\r\n" % (arg_channel, m))
+                arg_channel = arg_msg = None
+                if singleShot:
+                    running = False
+
+            if (time.time() > exitat):
+                raise TimeOut
+
+        except (KeyboardInterrupt, TimeOut, select.error, socket.error):
+            running = False
+            if listensock:
+                inputs.pop(inputs.index(listensock))
+                listensock.shutdown(socket.SHUT_RDWR)
+                listensock = None
+
+        if not pendingoutput:
+            if not running:
+                break
+
+    if listensock:
+        listensock.shutdown(socket.SHUT_RDWR)
+
+    irccon.send("QUIT\r\n")
+    irccon.shutdown(socket.SHUT_RDWR)
+

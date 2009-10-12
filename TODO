@@ -1,0 +1,12 @@
+
+FIXME:
+ - if we're not using ssl.wrap_socket, don't store the SSL object in the ircserver_ssl variable
+ - the --quit option could be implemented better, the way it communicates to the currently active daemon
+
+TODO:
+ - add rate limiting and flood control, although the IRC server can be configured to handle most of this
+ - accept messages from stdin
+ - have a default channel listed in the config file for each identity
+ - consume the rest of the command line args as part of the message
+ - specify the nobody user name in the config file
+
