@@ -184,6 +184,13 @@ def gen_nick():
 
 def daemonize():
     os.fork() and sys.exit(0)
+    os.close(0)
+    os.close(1)
+    os.close(2)
+    null = getattr(os, 'devnull', '/dev/null')
+    os.open(null, os.O_RDWR)
+    os.dup2(0, 1)
+    os.dup2(0, 2)
     os.setsid()
     os.fork() and sys.exit(0)
     os.chdir('/')
