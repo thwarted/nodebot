@@ -36,6 +36,7 @@ import posix
 import pwd
 import ConfigParser
 import getopt
+import resource
 
 try:
     import ssl
@@ -182,11 +183,19 @@ def gen_nick():
     n = preferred_nick + '-' + hex(random.randint(1, 2 ** 16))[2:].upper().zfill(4)
     return n
 
-def daemonize():
+def daemonize(skipfd):
+    # skipfd allows us to skip over the socket we've opened up for listening
     os.fork() and sys.exit(0)
-    os.close(0)
-    os.close(1)
-    os.close(2)
+    maxfd = resource.getrlimit(resource.RLIMIT_NOFILE)[1]
+    if (maxfd == resource.RLIM_INFINITY):
+        maxfd = 1024
+    for fd in range(0, maxfd):
+        if fd == skipfd:
+            continue
+        try:
+            os.close(fd)
+        except OSError:
+            pass
     null = getattr(os, 'devnull', '/dev/null')
     os.open(null, os.O_RDWR)
     os.dup2(0, 1)
@@ -328,7 +337,7 @@ if __name__ == '__main__':
         sys.exit(0)
 
     if dodaemonize:
-        daemonize()
+        daemonize(listensock.fileno())
 
     listensock.listen(5)
 
