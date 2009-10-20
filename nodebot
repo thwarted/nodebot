@@ -287,8 +287,11 @@ if __name__ == '__main__':
     c.read(configfile)
 
     if identity not in c.sections():
-        print "Missing identity [" + identity + "] in config file"
-        sys.exit(1)
+        if '*' not in c.sections():
+            print "Missing generic hostname identity [*] in config file, aborting"
+            sys.exit(1)
+        print "Missing identity [" + identity + "] in config file, defaulting to [*] (hostname)"
+        identity = '*'
 
     try:
         ircserver_host = c.get(identity, 'ircserver_host')
