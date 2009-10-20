@@ -7,17 +7,20 @@ connection to the IRC server.
 '''
 
 def usage():
-    print "A simple announce-only IRC bot, used to display system status messages on IRC."
-    print "Maintains a TCP listener on localhost, latter invocations will use the same"
-    print "connection to the IRC server."
-    print "-h --help        usage"
-    print "-i --identity=x  use identity x from the config file"
-    print "-c --conf=x      read configuration file x"
-    print "-n --nodaemon    don't daemonize"
-    print "-v --verbose     dump network and protocol traffic"
-    print "-s --single      single shot run, exit after sending message"
-    print "-q --quit        tell the currently running daemon to quit"
-    print "<channel> <message>"
+    sys.stderr.write(
+    '''A simple announce-only IRC bot, used to display system status messages on IRC.
+Maintains a TCP listener on localhost, latter invocations will use the same
+    connection to the IRC server.
+    -h --help        usage
+    -i --identity=x  use identity x from the config file,
+                     defaults to *, the hostname
+    -c --conf=x      read configuration file x
+    -n --nodaemon    don't daemonize
+    -v --verbose     dump network and protocol traffic
+    -s --single      single shot run, exit after sending message
+    -q --quit        tell the currently running daemon to quit
+    <channel> <message>
+''')
 
 '''
 purposely using the socket library directly and no networking frameworks for 
@@ -46,6 +49,11 @@ except ImportError:
 class EndOfInput: pass
 class TimeOut: pass
 
+def ifverbose(m):
+    if verbose:
+        sys.stderr.write(m)
+        sys.stderr.write("\n")
+
 def accept_other_input(sock):
     global pendingoutput
     global running
@@ -63,11 +71,9 @@ def accept_other_input(sock):
         return
 
     for line in input.splitlines():
-        if verbose:
-            print "<+ %s" % (repr(line),)
+        ifverbose("<+ %s\n" % (repr(line),))
         if line == "-quit":
-            if verbose:
-                print ">> [received quit]"
+            ifverbose(">> [received quit]\n")
             running = False
             return
         mo = re.match(r'^(\w+)\s+(.+)?$', line)
@@ -76,7 +82,6 @@ def accept_other_input(sock):
         queue_output(irccon, o)
 
 def queue_output(sock, msg, pos=-1):
-    #print "queuing " + msg + " on " + repr(sock)
     try:
         if pos != -1:
             pendingoutput[sock].insert(pos, msg)
@@ -134,12 +139,11 @@ def process_irccon(sock):
             shortline = input[lastnl+1:]
             input = input[:lastnl]
     for line in input.splitlines():
-        if verbose:
-            print "<< %s" % (line, )
+        ifverbose("<< %s" % (line, ))
         prefix, command, args = parsemsg(line)
 
         if command == "ERROR":
-            print " ".join(args)
+            sys.stderr.write((" ".join(args)) + "\n")
             sys.exit(1)
 
         if command == "PING":
@@ -227,7 +231,7 @@ if __name__ == '__main__':
                    'identity=', 'conf=']
         opts, argv = getopt.getopt(sys.argv[1:], optstr, optlist)
     except getopt.GetoptError, err:
-        print str(err)
+        sys.stderr.write(str(err)+"\n")
         usage()
         sys.exit(2)
 
@@ -280,7 +284,7 @@ if __name__ == '__main__':
         if os.access(cf, os.R_OK):
             configfile = cf
     if not configfile:
-        print "Unable to find readable config files from " + string.join(possible_configfiles, ", ")
+        sys.stderr.write("Unable to find readable config files from " + string.join(possible_configfiles, ", ")+"\n")
         sys.exit(1)
         
     c = ConfigParser.RawConfigParser(defaults)
@@ -288,9 +292,9 @@ if __name__ == '__main__':
 
     if identity not in c.sections():
         if '*' not in c.sections():
-            print "Missing generic hostname identity [*] in config file, aborting"
+            sys.stderr.write("Missing generic hostname identity [*] in config file, aborting\n")
             sys.exit(1)
-        print "Missing identity [" + identity + "] in config file, defaulting to [*] (hostname)"
+        sys.stderr.write("Missing identity [" + identity + "] in config file, defaulting to [*] (hostname)\n")
         identity = '*'
 
     try:
@@ -299,7 +303,7 @@ if __name__ == '__main__':
         ircserver_ssl = c.getboolean(identity, 'ircserver_ssl')
         ircserver_pass = c.get(identity, 'ircserver_pass')
     except ConfigParser.NoOptionError:
-        print "ircserver_host, ircserver_port and ircserver_ssl must all be specified in "+configfile
+        sys.stderr.write("ircserver_host, ircserver_port and ircserver_ssl must all be specified in "+configfile+"\n")
         sys.exit(1)
 
     idletime = c.getint(identity, 'idletime')
@@ -395,8 +399,7 @@ if __name__ == '__main__':
                         del pendingoutput[s]
                 except KeyError:
                     continue
-                if verbose:
-                    print ">> %s" % (line.strip(),)
+                ifverbose(">> %s" % (line.strip(),))
                 if s == irccon and ircserver_ssl:
                     ircserver_ssl.write(line)
                 else:
