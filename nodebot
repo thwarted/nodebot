@@ -51,9 +51,26 @@ class TimeOut: pass
 
 def ifverbose(m):
     if verbose:
-        sys.stderr.write(m)
+        sys.stderr.write(str(m))
         sys.stderr.write("\n")
 
+"""
+Internal protocol between a running nodebot and new instances:
+ - each command is delimited by a newline
+ - the known commands are:
+
+    "-quit\n"
+        force the persistent nodebot to quit
+        anything sent to the persistent nodebot after the -quit command
+        will be dropped
+
+    "#chan string\n"
+        announce string on IRC channel #chan. the channel name and the
+        message are delimited by a run of whitespace
+
+Don't want to accept raw IRC commands so the input can be sanity checked and
+potentially be validated.
+"""
 def accept_other_input(sock):
     global pendingoutput
     global running
@@ -71,15 +88,16 @@ def accept_other_input(sock):
         return
 
     for line in input.splitlines():
-        ifverbose("<+ %s\n" % (repr(line),))
+        ifverbose("<+ %s" % (repr(line),))
         if line == "-quit":
-            ifverbose(">> [received quit]\n")
+            ifverbose(">> [received quit]")
             running = False
             return
-        mo = re.match(r'^(\w+)\s+(.+)?$', line)
-        channel, msg = mo.groups()
-        o = "PRIVMSG #%s :%s\r\n" % (channel, msg)
-        queue_output(irccon, o)
+        mo = re.match(r'^#(\w+)\s+(.+)?$', line)
+        if mo:
+            channel, msg = mo.groups()
+            o = "PRIVMSG #%s :%s\r\n" % (channel, msg)
+            queue_output(irccon, o)
 
 def queue_output(sock, msg, pos=-1):
     try:
@@ -270,7 +288,7 @@ if __name__ == '__main__':
 
     if not sendquit:
         arg_channel = argv[0]
-        arg_msg = argv[1]
+        arg_msg = " ".join(argv[1:])
 
     defaults = {
         'idletime': 30,
@@ -337,7 +355,8 @@ if __name__ == '__main__':
     except socket.error: 
         try:
             listensock.connect((listen_host, listen_port))
-            listensock.send("%s\t%s\n" % (arg_channel, arg_msg))
+            for m in arg_msg.splitlines():
+                listensock.send("#%s\t%s\n" % (arg_channel, m))
             listensock.shutdown(socket.SHUT_RDWR)
         except socket.error:
             pass
