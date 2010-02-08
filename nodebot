@@ -31,6 +31,7 @@ sendquit = False
 serverOnly = False
 verbose = False
 running = True
+ircServerAlive = False
 registered = False
 nick = preferred_nick = ''
 readsockets = []
@@ -321,6 +322,7 @@ def process_ircconn(sock):
     global registered
     global preferred_nick
     global nick
+    global ircServerAlive
     try:
         input = sock.recv(1024)
         if len(input) == 0:
@@ -336,6 +338,7 @@ def process_ircconn(sock):
             queue_output(sock, "NICK " + preferred_nick + "\r\n")
 
     for line in input.splitlines():
+        ircServerAlive = True
         ifverbose("<< %r" % (line,))
         prefix, command, args = parsemsg(line)
 
@@ -448,6 +451,7 @@ def become_primary(listensock):
     global pendingoutput
     global readsockets
     global serverOnly
+    global ircServerAlive
 
     irc = socket.socket( socket.AF_INET, socket.SOCK_STREAM )
     try:
@@ -480,10 +484,11 @@ def become_primary(listensock):
                 upstreamdata = []
 
             writesockets = []
-            for _ in pendingoutput:
-                if len(pendingoutput[_]):
-                    writesockets.append(_)
-                    exitat = time.time() + options['idletime']
+            if ircServerAlive:
+                for _ in pendingoutput:
+                    if len(pendingoutput[_]):
+                        writesockets.append(_)
+                        exitat = time.time() + options['idletime']
 
             readready, writeready, exceptready = select.select(readsockets, writesockets, [], 10)
 
