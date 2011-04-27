@@ -55,6 +55,15 @@ except ImportError:
         def wrap_socket(sock):
             return ssl(sock)
 
+try:
+    import setproctitle
+except ImportError:
+    # create a setproctitle class that just ignores its argument
+    class setproctitle:
+        @staticmethod
+        def setproctitle(string):
+            pass
+
 class EndOfInput(Exception): pass
 class TimeOut(Exception): pass
 
@@ -475,6 +484,9 @@ def become_primary(listensock):
     upstreamdata = []
     exitat = time.time() + options['idletime']
 
+    ptitle = "nodebot (primary; server %s:%s; identity %s)" % (options['ircserver_host'], str(options['ircserver_port']), nick)
+    setproctitle.setproctitle(ptitle)
+
     while pendingoutput or running:
         try:
             if registered:
@@ -581,6 +593,9 @@ if __name__ == "__main__":
         s.listen(5)
         become_primary(s)
         sys.exit(0)
+
+    ptitle = "nodebot (dependent; identity %s)" % (nick,)
+    setproctitle.setproctitle(ptitle)
 
     become_dependent( find_primary() )
 
