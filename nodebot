@@ -448,7 +448,7 @@ def process_dependent(sock):
             ifverbose("!! received quit")
             running = False
             break
-        mo = re.match(r'^#(\w+)\s+(.+)?$', line)
+        mo = re.match(r'^#([\w-]+)\s+(.+)?$', line)
         if mo:
             ret.append( mo.groups() ) # (channel, msg)
     return ret
